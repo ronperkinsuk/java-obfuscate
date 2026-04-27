@@ -9,7 +9,7 @@
  *   - Strips all comments (single-line and multi-line)
  *   - Renames private methods to _m0, _m1, etc.
  *   - Renames local variables to _v0, _v1, etc.
- *   - Renames private non-final fields to _f0, _f1, etc.
+ *   - Renames private fields (including private static final) to _f0, _f1, etc.
  *   - Removes blank lines and trims trailing whitespace
  *   - Single-pass rename engine for fast processing
  *   - Progress output during obfuscation
@@ -19,7 +19,7 @@
  * Preserves:
  *   - Public/protected methods and fields (API surface)
  *   - String and char literals (content inside quotes is untouched)
- *   - Static final constants
+ *   - Public/protected static final constants
  *   - Import statements and package declarations
  *   - Member access expressions (e.g. System.out, File.separator)
  *   - The main method signature
@@ -40,9 +40,10 @@
  *   If output is omitted, writes to <input>_obf.java
  *
  * @author  Ron Perkins
- * @version 1.0
+ * @version 2.0
  * @since   2025
  * @license MIT License
+ * @see     https://github.com/ronperkinsuk/java-obfuscate
  *
  * Copyright (c) 2025 Ron Perkins
  */
@@ -153,11 +154,15 @@ public class Obfuscate {
         System.out.println("       Found " + varCounter + " local variables");
         System.out.println("       Total identifiers to rename: " + renameMap.size());
 
-        System.out.println("[7/8] Applying renames...");
+        System.out.println("[7/9] Preventing constant inlining...");
+        source = preventConstantInlining(source);
+        System.out.println("       Constant inlining prevention applied");
+
+        System.out.println("[8/9] Applying renames...");
         source = applyRenames(source);
         System.out.println("       Renames applied");
 
-        System.out.println("[8/8] Cleaning whitespace and writing: " + outputPath);
+        System.out.println("[9/9] Cleaning whitespace and writing: " + outputPath);
         source = cleanWhitespace(source);
         writeFile(outputPath, source);
 
@@ -205,17 +210,20 @@ public class Obfuscate {
         while (m.find()) {
             types.add(m.group(1));
         }
-        // Inner class fields: find simple field declarations inside class bodies
-        // Pattern: class Foo { String bar = ""; int baz; }
-        Pattern innerClass = Pattern.compile("\\bclass\\s+(\\w+)\\s*\\{([^}]+)\\}");
-        m = innerClass.matcher(src);
-        while (m.find()) {
-            String body = m.group(2);
-            // Match field declarations: Type name = or Type name;
-            Pattern fieldPat = Pattern.compile("(?:^|;)\\s*(?:\\w+\\s+)*(\\w+)\\s+(\\w+)\\s*[=;,]");
-            Matcher fm = fieldPat.matcher(body);
-            while (fm.find()) {
-                types.add(fm.group(2)); // field name
+        // Inner class fields: find simple field declarations inside inner class bodies
+        // Only match classes that appear after the first opening brace (i.e. nested classes)
+        int firstBrace = src.indexOf('{');
+        if (firstBrace >= 0) {
+            String afterFirst = src.substring(firstBrace + 1);
+            Pattern innerClass = Pattern.compile("\\bclass\\s+(\\w+)\\s*\\{([^}]+)\\}");
+            m = innerClass.matcher(afterFirst);
+            while (m.find()) {
+                String body = m.group(2);
+                Pattern fieldPat = Pattern.compile("(?:^|;)\\s*(?:\\w+\\s+)*(\\w+)\\s+(\\w+)\\s*[=;,]");
+                Matcher fm = fieldPat.matcher(body);
+                while (fm.find()) {
+                    types.add(fm.group(2));
+                }
             }
         }
         return types;
@@ -318,15 +326,29 @@ public class Obfuscate {
     }
 
     /**
-     * Find private non-final fields and map their names.
+     * Find private fields and map their names.
+     * Includes private static final fields (safe for standalone apps with no reflection).
      */
     private static void collectPrivateFields(String src) {
+        // Private non-final fields
         Pattern p = Pattern.compile(
             "\\bprivate\\s+(?:static\\s+)?(?:volatile\\s+)?(?!.*\\bfinal\\b)([\\w<>\\[\\]]+)\\s+(\\w+)\\s*[=;]"
         );
         Matcher m = p.matcher(src);
         while (m.find()) {
             String name = m.group(2);
+            if (!reserved.contains(name) && !renameMap.containsKey(name)) {
+                renameMap.put(name, "_f" + fieldCounter++);
+            }
+        }
+
+        // Private static final fields
+        Pattern pf = Pattern.compile(
+            "\\bprivate\\s+static\\s+final\\s+([\\w<>\\[\\]]+)\\s+(\\w+)\\s*[=;]"
+        );
+        Matcher mf = pf.matcher(src);
+        while (mf.find()) {
+            String name = mf.group(2);
             if (!reserved.contains(name) && !renameMap.containsKey(name)) {
                 renameMap.put(name, "_f" + fieldCounter++);
             }
@@ -359,6 +381,62 @@ public class Obfuscate {
                 renameMap.put(name, "_v" + varCounter++);
             }
         }
+    }
+
+    /**
+     * Prevent the Java compiler from inlining private static final constants.
+     * - String literals: "value" -> "value".toString()
+     * - int literals: 123 -> Integer.valueOf(123)
+     * - long literals: 123L -> Long.valueOf(123L)
+     * - boolean literals: true -> Boolean.valueOf(true)
+     * - double literals: 1.0 -> Double.valueOf(1.0)
+     * - float literals: 1.0f -> Float.valueOf(1.0f)
+     * This ensures the obfuscated field name is the only reference in bytecode.
+     */
+    private static String preventConstantInlining(String src) {
+        StringBuilder out = new StringBuilder(src.length());
+        String[] lines = src.split("\n", -1);
+        int count = 0;
+        for (String line : lines) {
+            String trimmed = line.trim();
+            if (trimmed.startsWith("private static final ") && !trimmed.contains("[]")
+                    && !trimmed.contains(" new ") && !trimmed.contains("Pattern.compile")
+                    && !trimmed.contains(".valueOf(") && !trimmed.contains(".toString()")) {
+                String replaced = line.replaceAll(
+                    "(private\\s+static\\s+final\\s+String\\s+\\w+\\s*=\\s*)(\"[^\"]*\")\\s*;",
+                    "$1$2.toString();"
+                );
+                if (!replaced.equals(line)) { out.append(replaced).append('\n'); count++; continue; }
+                replaced = line.replaceAll(
+                    "(private\\s+static\\s+final\\s+int\\s+\\w+\\s*=\\s*)(0x[0-9a-fA-F]+|\\d+)\\s*;",
+                    "$1Integer.valueOf($2);"
+                );
+                if (!replaced.equals(line)) { out.append(replaced).append('\n'); count++; continue; }
+                replaced = line.replaceAll(
+                    "(private\\s+static\\s+final\\s+long\\s+\\w+\\s*=\\s*)(0x[0-9a-fA-F]+[lL]?|\\d+[lL])\\s*;",
+                    "$1Long.valueOf($2);"
+                );
+                if (!replaced.equals(line)) { out.append(replaced).append('\n'); count++; continue; }
+                replaced = line.replaceAll(
+                    "(private\\s+static\\s+final\\s+boolean\\s+\\w+\\s*=\\s*)(true|false)\\s*;",
+                    "$1Boolean.valueOf($2);"
+                );
+                if (!replaced.equals(line)) { out.append(replaced).append('\n'); count++; continue; }
+                replaced = line.replaceAll(
+                    "(private\\s+static\\s+final\\s+double\\s+\\w+\\s*=\\s*)([\\d.]+[dD]?)\\s*;",
+                    "$1Double.valueOf($2);"
+                );
+                if (!replaced.equals(line)) { out.append(replaced).append('\n'); count++; continue; }
+                replaced = line.replaceAll(
+                    "(private\\s+static\\s+final\\s+float\\s+\\w+\\s*=\\s*)([\\d.]+[fF])\\s*;",
+                    "$1Float.valueOf($2);"
+                );
+                if (!replaced.equals(line)) { out.append(replaced).append('\n'); count++; continue; }
+            }
+            out.append(line).append('\n');
+        }
+        System.out.println("       Prevented inlining on " + count + " constant(s)");
+        return out.toString();
     }
 
     /**
