@@ -8,7 +8,7 @@ Designed for single-file or small Java projects where a full bytecode obfuscator
 
 - Strips all single-line and multi-line comments
 - Renames private methods (`_m0`, `_m1`, ...)
-- Renames private non-final fields (`_f0`, `_f1`, ...)
+- Renames private fields (including private static final) (`_f0`, `_f1`, ...)
 - Renames local variables (`_v0`, `_v1`, ...)
 - Removes blank lines and trims trailing whitespace
 - Auto-detects imported types, inner class fields, and dot-accessed members
