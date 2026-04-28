@@ -10,6 +10,7 @@
  *   - Renames private methods to _m0, _m1, etc.
  *   - Renames local variables to _v0, _v1, etc.
  *   - Renames private fields (including private static final) to _f0, _f1, etc.
+ *   - Renames private method parameters to _p0, _p1, etc.
  *   - Removes blank lines and trims trailing whitespace
  *   - Single-pass rename engine for fast processing
  *   - Progress output during obfuscation
@@ -25,7 +26,6 @@
  *   - The main method signature
  *   - Class names, annotations, and type references
  *   - Inner class field names (auto-detected from dot access patterns)
- *   - Method parameter names
  *
  * Limitations:
  *   - Regex-based, not AST-based; edge cases in very complex code may
@@ -40,12 +40,12 @@
  *   If output is omitted, writes to <input>_obf.java
  *
  * @author  Ron Perkins
- * @version 2.0
+ * @version 2.1
  * @since   2025
  * @license MIT License
  * @see     https://github.com/ronperkinsuk/java-obfuscate
  *
- * Copyright (c) 2025 Ron Perkins
+ * Copyright (c) 2025-2026 Ron Perkins
  */
 
 import java.io.*;
@@ -58,10 +58,10 @@ public class Obfuscate {
     private static int methodCounter = 0;
     private static int fieldCounter = 0;
     private static int varCounter = 0;
-    private static final Map<String, String> renameMap = new LinkedHashMap<String, String>();
+    private static final Map<String, String> renameMap = new LinkedHashMap<>();
 
     // Java keywords that must never be renamed
-    private static final Set<String> JAVA_KEYWORDS = new HashSet<String>(Arrays.asList(
+    private static final Set<String> JAVA_KEYWORDS = new HashSet<>(Arrays.asList(
         "abstract", "assert", "boolean", "break", "byte", "case", "catch", "char",
         "class", "const", "continue", "default", "do", "double", "else", "enum",
         "extends", "final", "finally", "float", "for", "goto", "if", "implements",
@@ -72,7 +72,7 @@ public class Obfuscate {
     ));
 
     // Built-in Java types and common API classes
-    private static final Set<String> JAVA_TYPES = new HashSet<String>(Arrays.asList(
+    private static final Set<String> JAVA_TYPES = new HashSet<>(Arrays.asList(
         "String", "Integer", "Long", "Double", "Float", "Boolean", "Byte", "Short",
         "Character", "Object", "Class", "System", "Math", "Thread", "Runnable",
         "Exception", "RuntimeException", "Error", "Throwable", "Override",
@@ -102,7 +102,7 @@ public class Obfuscate {
     ));
 
     // The full reserved set, built dynamically per source file
-    private static final Set<String> reserved = new HashSet<String>();
+    private static final Set<String> reserved = new HashSet<>();
 
     public static void main(String[] args) throws Exception {
         long startTime = System.currentTimeMillis();
@@ -115,13 +115,13 @@ public class Obfuscate {
         String inputPath = args[0];
         String outputPath = args.length > 1 ? args[1] : inputPath.replace(".java", "_obf.java");
 
-        System.out.println("[1/8] Reading source: " + inputPath);
+        System.out.println("[1/10] Reading source: " + inputPath);
         String source = readFile(inputPath);
-        System.out.println("       " + source.length() + " characters read");
+        System.out.println("        " + source.length() + " characters read");
 
-        System.out.println("[2/8] Stripping comments...");
+        System.out.println("[2/10] Stripping comments...");
         source = stripComments(source);
-        System.out.println("       " + source.length() + " characters after stripping");
+        System.out.println("        " + source.length() + " characters after stripping");
 
         // Build the reserved set dynamically from the source
         reserved.addAll(JAVA_KEYWORDS);
@@ -129,40 +129,44 @@ public class Obfuscate {
         reserved.add("main");
         reserved.add("args");
 
-        System.out.println("[3/8] Auto-detecting types from imports and declarations...");
+        System.out.println("[3/10] Auto-detecting types from imports and declarations...");
         Set<String> importedTypes = collectImportedTypes(source);
         reserved.addAll(importedTypes);
-        System.out.println("       Found " + importedTypes.size() + " imported types");
+        System.out.println("        Found " + importedTypes.size() + " imported types");
 
         Set<String> declaredTypes = collectDeclaredTypes(source);
         reserved.addAll(declaredTypes);
-        System.out.println("       Found " + declaredTypes.size() + " declared types");
+        System.out.println("        Found " + declaredTypes.size() + " declared types");
 
-        System.out.println("[4/8] Auto-detecting dot-accessed identifiers...");
+        System.out.println("[4/10] Auto-detecting dot-accessed identifiers...");
         Set<String> dotAccessed = collectDotAccessedIdentifiers(source);
         reserved.addAll(dotAccessed);
-        System.out.println("       Found " + dotAccessed.size() + " dot-accessed identifiers");
+        System.out.println("        Found " + dotAccessed.size() + " dot-accessed identifiers");
 
-        System.out.println("[5/8] Collecting private methods...");
+        System.out.println("[5/10] Collecting private methods...");
         collectPrivateMethods(source);
-        System.out.println("       Found " + methodCounter + " private methods");
+        System.out.println("        Found " + methodCounter + " private methods");
 
-        System.out.println("[6/8] Collecting private fields and local variables...");
+        System.out.println("[6/10] Collecting private method parameters...");
+        int paramCount = collectPrivateMethodParameters(source);
+        System.out.println("        Found " + paramCount + " private method parameters");
+
+        System.out.println("[7/10] Collecting private fields and local variables...");
         collectPrivateFields(source);
-        System.out.println("       Found " + fieldCounter + " private fields");
+        System.out.println("        Found " + fieldCounter + " private fields");
         collectLocalVariables(source);
-        System.out.println("       Found " + varCounter + " local variables");
-        System.out.println("       Total identifiers to rename: " + renameMap.size());
+        System.out.println("        Found " + varCounter + " local variables");
+        System.out.println("        Total identifiers to rename: " + renameMap.size());
 
-        System.out.println("[7/9] Preventing constant inlining...");
+        System.out.println("[8/10] Preventing constant inlining...");
         source = preventConstantInlining(source);
-        System.out.println("       Constant inlining prevention applied");
+        System.out.println("        Constant inlining prevention applied");
 
-        System.out.println("[8/9] Applying renames...");
+        System.out.println("[9/10] Applying renames...");
         source = applyRenames(source);
-        System.out.println("       Renames applied");
+        System.out.println("        Renames applied");
 
-        System.out.println("[9/9] Cleaning whitespace and writing: " + outputPath);
+        System.out.println("[10/10] Cleaning whitespace and writing: " + outputPath);
         source = cleanWhitespace(source);
         writeFile(outputPath, source);
 
@@ -181,7 +185,7 @@ public class Obfuscate {
      * Also extracts all package segments to prevent renaming them.
      */
     private static Set<String> collectImportedTypes(String src) {
-        Set<String> types = new HashSet<String>();
+        Set<String> types = new HashSet<>();
         Pattern p = Pattern.compile("^\\s*import\\s+(?:static\\s+)?([\\w.]+(?:\\.\\*)?);", Pattern.MULTILINE);
         Matcher m = p.matcher(src);
         while (m.find()) {
@@ -203,7 +207,7 @@ public class Obfuscate {
      * Also collects inner class field names by finding class bodies with field declarations.
      */
     private static Set<String> collectDeclaredTypes(String src) {
-        Set<String> types = new HashSet<String>();
+        Set<String> types = new HashSet<>();
         // Top-level and inner class/interface/enum declarations
         Pattern p = Pattern.compile("\\b(?:class|interface|enum)\\s+(\\w+)");
         Matcher m = p.matcher(src);
@@ -235,7 +239,7 @@ public class Obfuscate {
      * e.g. System.out, File.separator, data.flag -> reserves "out", "separator", "flag"
      */
     private static Set<String> collectDotAccessedIdentifiers(String src) {
-        Set<String> ids = new HashSet<String>();
+        Set<String> ids = new HashSet<>();
         int i = 0;
         int len = src.length();
         while (i < len) {
@@ -278,7 +282,7 @@ public class Obfuscate {
             } else if (c == '/' && i + 1 < len && src.charAt(i + 1) == '*') {
                 i += 2;
                 while (i + 1 < len && !(src.charAt(i) == '*' && src.charAt(i + 1) == '/')) i++;
-                i += 2;
+                if (i + 1 < len) i += 2; else i = len;
             } else {
                 out.append(c);
                 i++;
@@ -288,14 +292,27 @@ public class Obfuscate {
     }
 
     private static int findEndOfString(String src, int start) {
+        int len = src.length();
+        // Check for text block (triple quote)
+        if (start + 2 < len && src.charAt(start + 1) == '"' && src.charAt(start + 2) == '"') {
+            int i = start + 3;
+            while (i + 2 < len) {
+                if (src.charAt(i) == '\\') { i += 2; continue; }
+                if (src.charAt(i) == '"' && src.charAt(i + 1) == '"' && src.charAt(i + 2) == '"') {
+                    return i + 3;
+                }
+                i++;
+            }
+            return len;
+        }
         int i = start + 1;
-        while (i < src.length()) {
+        while (i < len) {
             char c = src.charAt(i);
             if (c == '\\') { i += 2; continue; }
             if (c == '"') return i + 1;
             i++;
         }
-        return src.length();
+        return len;
     }
 
     private static int findEndOfChar(String src, int start) {
@@ -326,23 +343,38 @@ public class Obfuscate {
     }
 
     /**
+     * Find parameters of private methods and map their names.
+     * Parses the parameter list between parentheses of each private method signature.
+     */
+    private static int collectPrivateMethodParameters(String src) {
+        int paramCounter = 0;
+        Pattern p = Pattern.compile(
+            "\\bprivate\\s+(?:static\\s+)?(?:final\\s+)?(?:[\\w<>\\[\\],\\s]+?)\\s+\\w+\\s*\\(([^)]*)\\)"
+        );
+        Matcher m = p.matcher(src);
+        while (m.find()) {
+            String paramList = m.group(1).trim();
+            if (paramList.isEmpty()) continue;
+            for (String param : paramList.split(",")) {
+                param = param.trim();
+                if (param.isEmpty()) continue;
+                // Last token is the parameter name (handles "final Type name", "Type[] name", etc.)
+                String[] tokens = param.split("\\s+");
+                String name = tokens[tokens.length - 1];
+                if (!reserved.contains(name) && !renameMap.containsKey(name)) {
+                    renameMap.put(name, "_p" + paramCounter++);
+                }
+            }
+        }
+        return paramCounter;
+    }
+
+    /**
      * Find private fields and map their names.
      * Includes private static final fields (safe for standalone apps with no reflection).
      */
     private static void collectPrivateFields(String src) {
-        // Private non-final fields
-        Pattern p = Pattern.compile(
-            "\\bprivate\\s+(?:static\\s+)?(?:volatile\\s+)?(?!.*\\bfinal\\b)([\\w<>\\[\\]]+)\\s+(\\w+)\\s*[=;]"
-        );
-        Matcher m = p.matcher(src);
-        while (m.find()) {
-            String name = m.group(2);
-            if (!reserved.contains(name) && !renameMap.containsKey(name)) {
-                renameMap.put(name, "_f" + fieldCounter++);
-            }
-        }
-
-        // Private static final fields
+        // Private static final fields (collected first so dedup works for non-final pass)
         Pattern pf = Pattern.compile(
             "\\bprivate\\s+static\\s+final\\s+([\\w<>\\[\\]]+)\\s+(\\w+)\\s*[=;]"
         );
@@ -353,22 +385,42 @@ public class Obfuscate {
                 renameMap.put(name, "_f" + fieldCounter++);
             }
         }
+
+        // Private non-final fields (already-mapped final fields are skipped via containsKey)
+        Pattern p = Pattern.compile(
+            "\\bprivate\\s+(?:static\\s+)?(?:volatile\\s+)?([\\w<>\\[\\]]+)\\s+(\\w+)\\s*[=;]"
+        );
+        Matcher m = p.matcher(src);
+        while (m.find()) {
+            String name = m.group(2);
+            if (!reserved.contains(name) && !renameMap.containsKey(name)) {
+                renameMap.put(name, "_f" + fieldCounter++);
+            }
+        }
     }
 
     /**
      * Find local variable declarations inside method bodies.
+     * Excludes field declarations (lines with access modifiers).
      */
     private static void collectLocalVariables(String src) {
         Pattern p = Pattern.compile(
             "(?:^|[{;])\\s*(?:final\\s+)?([A-Z][\\w<>\\[\\],\\s]*?)\\s+(\\w+)\\s*(?:=|;|,)"
         , Pattern.MULTILINE);
+        Pattern fieldDeclPattern = Pattern.compile(
+            "^\\s*(?:public|protected|private)\\s+"
+        );
         Matcher m = p.matcher(src);
         while (m.find()) {
             String type = m.group(1).trim();
             String name = m.group(2);
             if (reserved.contains(name) || renameMap.containsKey(name)) continue;
-            if (name.length() <= 3) continue;
             if (type.contains("class") || type.contains("interface")) continue;
+            // Find the start of the line containing this match to check for access modifiers
+            int matchPos = m.start(1);
+            int lineStart = src.lastIndexOf('\n', matchPos) + 1;
+            String linePrefix = src.substring(lineStart, matchPos);
+            if (fieldDeclPattern.matcher(linePrefix).find()) continue;
             renameMap.put(name, "_v" + varCounter++);
         }
 
@@ -377,7 +429,7 @@ public class Obfuscate {
         m = forEach.matcher(src);
         while (m.find()) {
             String name = m.group(2);
-            if (!reserved.contains(name) && !renameMap.containsKey(name) && name.length() > 3) {
+            if (!reserved.contains(name) && !renameMap.containsKey(name)) {
                 renameMap.put(name, "_v" + varCounter++);
             }
         }
@@ -409,12 +461,12 @@ public class Obfuscate {
                 if (!replaced.equals(line)) { out.append(replaced).append('\n'); count++; continue; }
                 replaced = line.replaceAll(
                     "(private\\s+static\\s+final\\s+int\\s+\\w+\\s*=\\s*)(0x[0-9a-fA-F]+|\\d+)\\s*;",
-                    "$1Integer.valueOf($2);"
+                    "$1(0 + $2);"
                 );
                 if (!replaced.equals(line)) { out.append(replaced).append('\n'); count++; continue; }
                 replaced = line.replaceAll(
                     "(private\\s+static\\s+final\\s+long\\s+\\w+\\s*=\\s*)(0x[0-9a-fA-F]+[lL]?|\\d+[lL])\\s*;",
-                    "$1Long.valueOf($2);"
+                    "$1(0L + $2);"
                 );
                 if (!replaced.equals(line)) { out.append(replaced).append('\n'); count++; continue; }
                 replaced = line.replaceAll(
@@ -424,19 +476,21 @@ public class Obfuscate {
                 if (!replaced.equals(line)) { out.append(replaced).append('\n'); count++; continue; }
                 replaced = line.replaceAll(
                     "(private\\s+static\\s+final\\s+double\\s+\\w+\\s*=\\s*)([\\d.]+[dD]?)\\s*;",
-                    "$1Double.valueOf($2);"
+                    "$1(0.0 + $2);"
                 );
                 if (!replaced.equals(line)) { out.append(replaced).append('\n'); count++; continue; }
                 replaced = line.replaceAll(
                     "(private\\s+static\\s+final\\s+float\\s+\\w+\\s*=\\s*)([\\d.]+[fF])\\s*;",
-                    "$1Float.valueOf($2);"
+                    "$1(0.0f + $2);"
                 );
                 if (!replaced.equals(line)) { out.append(replaced).append('\n'); count++; continue; }
             }
             out.append(line).append('\n');
         }
         System.out.println("       Prevented inlining on " + count + " constant(s)");
-        return out.toString();
+        String result = out.toString();
+        if (result.endsWith("\n")) result = result.substring(0, result.length() - 1);
+        return result;
     }
 
     /**
@@ -449,6 +503,8 @@ public class Obfuscate {
         int len = src.length();
         int lastProgress = -1;
         boolean inImport = false;
+        int annotationDepth = 0;
+        boolean seenAt = false;
 
         while (i < len) {
             int pct = (int) ((long) i * 100 / len);
@@ -463,25 +519,47 @@ public class Obfuscate {
                 int end = findEndOfString(src, i);
                 out.append(src, i, end);
                 i = end;
+                seenAt = false;
                 continue;
             }
             if (c == '\'') {
                 int end = findEndOfChar(src, i);
                 out.append(src, i, end);
                 i = end;
+                seenAt = false;
                 continue;
             }
 
-            if (Character.isJavaIdentifierStart(c)) {
+            if (c == '@') {
+                seenAt = true;
+                out.append(c);
+                i++;
+            } else if (c == '(' && seenAt) {
+                annotationDepth++;
+                seenAt = false;
+                out.append(c);
+                i++;
+            } else if (c == '(' && annotationDepth > 0) {
+                annotationDepth++;
+                out.append(c);
+                i++;
+            } else if (c == ')' && annotationDepth > 0) {
+                annotationDepth--;
+                out.append(c);
+                i++;
+            } else if (Character.isJavaIdentifierStart(c)) {
                 int start = i;
                 while (i < len && Character.isJavaIdentifierPart(src.charAt(i))) i++;
                 String word = src.substring(start, i);
                 boolean afterDot = start > 0 && src.charAt(start - 1) == '.';
-                String replacement = (!afterDot && !inImport) ? renameMap.get(word) : null;
+                boolean skip = afterDot || inImport || annotationDepth > 0;
+                String replacement = !skip ? renameMap.get(word) : null;
                 out.append(replacement != null ? replacement : word);
                 if ("import".equals(word)) inImport = true;
+                // Don't clear seenAt here â€” annotation name sits between @ and (
             } else {
-                if (c == ';' || c == '\n') inImport = false;
+                if (c == ';' || c == '\n') { inImport = false; seenAt = false; }
+                if (!Character.isWhitespace(c) && c != '(') seenAt = false;
                 out.append(c);
                 i++;
             }
@@ -505,14 +583,7 @@ public class Obfuscate {
     }
 
     private static String readFile(String path) throws IOException {
-        StringBuilder sb = new StringBuilder();
-        try (BufferedReader br = new BufferedReader(
-                new InputStreamReader(new FileInputStream(path), StandardCharsets.UTF_8))) {
-            char[] buf = new char[8192];
-            int n;
-            while ((n = br.read(buf)) != -1) sb.append(buf, 0, n);
-        }
-        return sb.toString();
+        return new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(path)), StandardCharsets.UTF_8);
     }
 
     private static void writeFile(String path, String content) throws IOException {
