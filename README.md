@@ -8,10 +8,13 @@ Designed for single-file or small Java projects where a full bytecode obfuscator
 
 - Strips all single-line and multi-line comments
 - Renames private methods (`_m0`, `_m1`, ...)
+- Renames private method parameters (`_p0`, `_p1`, ...)
 - Renames private fields (including private static final) (`_f0`, `_f1`, ...)
 - Renames local variables (`_v0`, `_v1`, ...)
+- Prevents compiler inlining of private static final constants
 - Removes blank lines and trims trailing whitespace
 - Auto-detects imported types, inner class fields, and dot-accessed members
+- Handles Java 13+ text blocks (triple-quoted strings)
 - Single-pass rename engine for fast processing
 - Progress output during obfuscation
 - Works against any Java source file with zero configuration
@@ -21,12 +24,13 @@ Designed for single-file or small Java projects where a full bytecode obfuscator
 ## What It Preserves
 
 - Public and protected methods and fields
-- Static final constants
-- String and char literals
+- Public and protected static final constants
+- String and char literals (including text blocks)
 - Import statements and package declarations
 - Member access expressions (e.g. `System.out`, `File.separator`)
 - Class, interface, and enum names
-- Annotations and type references
+- Annotation parameter names (e.g. `name` in `@Column(name = "id")`)
+- Type references
 - The `main` method signature
 
 ## Quick Start
@@ -77,32 +81,34 @@ public class Example {
         String _v0 = args[0];
         _m0(_v0);
     }
-    private static void _m0(String path) {
-        File _v1 = new File(path);
+    private static void _m0(String _p0) {
+        File _v1 = new File(_p0);
         if (_v1.exists()) {
-            System.out.println("Processing: " + path);
+            System.out.println("Processing: " + _p0);
             _f1++;
         }
     }
 }
 ```
 
-Notice that `System.out`, `File`, string literals, and the `main` signature are all preserved.
+Notice that `System.out`, `File`, string literals, and the `main` signature are all preserved, while the private method parameter `path` is renamed to `_p0`.
 
 ## How It Works
 
-The obfuscator runs in 8 phases:
+The obfuscator runs in 10 phases:
 
 | Phase | Description |
 |-------|-------------|
 | 1 | Read the source file |
-| 2 | Strip all comments (preserving string/char literals) |
+| 2 | Strip all comments (preserving string/char literals and text blocks) |
 | 3 | Auto-detect types from imports, class declarations, and inner class fields |
 | 4 | Auto-detect dot-accessed identifiers (e.g. `System.out` → reserves `out`) |
 | 5 | Collect private method names and generate rename mappings |
-| 6 | Collect private fields and local variable names |
-| 7 | Apply all renames in a single pass, skipping strings, imports, and member access |
-| 8 | Remove blank lines, trim whitespace, and write output |
+| 6 | Collect private method parameter names |
+| 7 | Collect private fields and local variable names |
+| 8 | Prevent constant inlining on private static final fields |
+| 9 | Apply all renames in a single pass, skipping strings, imports, annotations, and member access |
+| 10 | Remove blank lines, trim whitespace, and write output |
 
 ### Auto-Detection
 
@@ -117,31 +123,36 @@ This means it works against any Java source file without project-specific config
 ## Sample Output
 
 ```
-[1/8] Reading source: src/MyApp.java
-       279255 characters read
-[2/8] Stripping comments...
-       265346 characters after stripping
-[3/8] Auto-detecting types from imports and declarations...
-       Found 80 imported types
-       Found 32 declared types
-[4/8] Auto-detecting dot-accessed identifiers...
-       Found 245 dot-accessed identifiers
-[5/8] Collecting private methods...
-       Found 98 private methods
-[6/8] Collecting private fields and local variables...
-       Found 22 private fields
-       Found 335 local variables
-       Total identifiers to rename: 455
-[7/8] Applying renames...
+[1/10] Reading source: src/MyApp.java
+        279255 characters read
+[2/10] Stripping comments...
+        265346 characters after stripping
+[3/10] Auto-detecting types from imports and declarations...
+        Found 80 imported types
+        Found 32 declared types
+[4/10] Auto-detecting dot-accessed identifiers...
+        Found 245 dot-accessed identifiers
+[5/10] Collecting private methods...
+        Found 98 private methods
+[6/10] Collecting private method parameters...
+        Found 47 private method parameters
+[7/10] Collecting private fields and local variables...
+        Found 22 private fields
+        Found 335 local variables
+        Total identifiers to rename: 502
+[8/10] Preventing constant inlining...
+       Prevented inlining on 12 constant(s)
+        Constant inlining prevention applied
+[9/10] Applying renames...
        0% processed...
        10% processed...
        ...
        90% processed...
-       Renames applied
-[8/8] Cleaning whitespace and writing: build/MyApp.java
+        Renames applied
+[10/10] Cleaning whitespace and writing: build/MyApp.java
 
 Obfuscation complete in 1629ms
-Renamed 455 identifiers:
+Renamed 502 identifiers:
   processFile -> _m0
   validateInput -> _m1
   ...
@@ -178,8 +189,8 @@ You can integrate the obfuscator into an Ant build script to obfuscate before co
 
 - **Regex-based, not AST-based** — works well for typical Java code but edge cases in very complex or unconventional code may require manual review of the output
 - **Single-file scope** — does not track renames across multiple source files. If class A calls a private method in class B, the rename won't be coordinated
+- **Single rename map for all scopes** — identically-named variables in different methods get the same obfuscated name. This is correct but reduces obfuscation quality
 - **Reflection** — code that uses reflection to access methods or fields by name will break if those names are renamed
-- **Short variables skipped** — variables with names of 3 characters or fewer are not renamed to avoid collisions with Java API members
 - **No control flow obfuscation** — this tool only renames identifiers and strips comments. It does not insert dead code, flatten control flow, or encrypt strings
 
 For more advanced obfuscation needs, consider [ProGuard](https://github.com/Guardsquare/proguard) (bytecode-level, free) or commercial tools like Allatori or Zelix KlassMaster.
@@ -193,5 +204,4 @@ For more advanced obfuscation needs, consider [ProGuard](https://github.com/Guar
 
 [MIT License](LICENSE)
 
-Copyright (c) 2025 Ron Perkins
-
+Copyright (c) 2025-2026 Ron Perkins
